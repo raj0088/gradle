@@ -16,6 +16,7 @@
 
 package org.gradle.internal.classpath;
 
+import org.gradle.api.UncheckedIOException;
 import org.gradle.api.file.RelativePath;
 import org.gradle.internal.Pair;
 import org.gradle.internal.file.FileException;
@@ -24,6 +25,7 @@ import org.gradle.internal.hash.HashCode;
 import org.gradle.internal.hash.Hasher;
 import org.gradle.internal.hash.Hashing;
 import org.gradle.internal.snapshot.CompleteFileSystemLocationSnapshot;
+import org.gradle.util.GFileUtils;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -73,6 +75,23 @@ class InstrumentingClasspathFileTransformer implements ClasspathFileTransformer 
     }
 
     private void transform(File source, File dest) {
+        SignerFileDetection signerFileDetection = new SignerFileDetection();
+        try {
+            classpathWalker.visit(source, signerFileDetection);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (FileException e) {
+            LOGGER.debug("Malformed archive '{}'. Discarding contents.", source.getName(), e);
+            return;
+        }
+        if (signerFileDetection.hasSignature) {
+            if (source.isFile()) {
+                GFileUtils.copyFile(source, dest);
+            } else if (source.isDirectory()) {
+                GFileUtils.copyDirectory(source, dest);
+            }
+            return;
+        }
         classpathBuilder.jar(dest, builder -> {
             try {
                 visitEntries(source, builder);
@@ -81,6 +100,18 @@ class InstrumentingClasspathFileTransformer implements ClasspathFileTransformer 
                 LOGGER.debug("Malformed archive '{}'. Discarding contents.", source.getName(), e);
             }
         });
+    }
+
+    private static class SignerFileDetection implements ClasspathEntryVisitor {
+
+        boolean hasSignature = false;
+
+        @Override
+        public void visit(Entry entry) {
+            if (entry.getName().startsWith("META-INF/") && entry.getName().endsWith(".SF")) {
+                hasSignature = true;
+            }
+        }
     }
 
     private void visitEntries(File source, ClasspathBuilder.EntryBuilder builder) throws IOException, FileException {
