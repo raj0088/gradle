@@ -28,6 +28,7 @@ import org.gradle.util.NameMatcher;
 
 import javax.annotation.Nullable;
 import java.io.File;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -94,8 +95,6 @@ public class TaskSelector {
     }
 
     private TaskSelection getSelection(String path, ProjectInternal project) {
-        ResolvedTaskPath taskPath = null;
-
         // if the task path points to an included build then run it via a bridge task
         if (path.startsWith(Project.PATH_SEPARATOR)) {
             int idx = path.indexOf(Project.PATH_SEPARATOR, 1);
@@ -107,22 +106,25 @@ public class TaskSelector {
                 for (final IncludedBuild build : project.getGradle().getIncludedBuilds()) {
                     if (build.getName().equals(includedBuildName)) {
                         String bridgeTaskName = "bridge_task_to_included_" + includedBuildName + "_" + taskInIncludedBuildPath.replaceAll(Project.PATH_SEPARATOR, "_");
-                        project.getTasks().register(bridgeTaskName, new Action<Task>() {
+                        final Task bridgeTask = project.getTasks().create(bridgeTaskName, new Action<Task>() {
                             @Override
                             public void execute(Task task) {
                                 task.dependsOn(build.task(taskInIncludedBuildPath));
                             }
                         });
 
-                        taskPath = taskPathResolver.resolvePath(":" + project.getPath() + ":" + bridgeTaskName, project);
+                        return new TaskSelection(includedBuildName, taskInIncludedBuildPath, new TaskSelectionResult() {
+                            @Override
+                            public void collectTasks(Collection<? super Task> tasks) {
+                                tasks.add(bridgeTask);
+                            }
+                        });
                     }
                 }
             }
         }
 
-        if (taskPath == null) {
-            taskPath = taskPathResolver.resolvePath(path, project);
-        }
+        ResolvedTaskPath taskPath = taskPathResolver.resolvePath(path, project);
         ProjectInternal targetProject = taskPath.getProject();
         if (taskPath.isQualified()) {
             configurer.configure(targetProject);
